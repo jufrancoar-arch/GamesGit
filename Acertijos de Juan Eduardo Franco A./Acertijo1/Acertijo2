@@ -1,0 +1,578 @@
+# acertijos.py
+import tkinter as tk
+from tkinter import messagebox
+import random
+
+# --- CONFIGURACIÓN DE ACERTIJOS ---
+RIDDLES = [
+    {
+        "question": "Blanca por dentro, verde por fuera. Si quieres que te lo diga, espera.",
+        "answer": "pera",
+        "hint": "Es una fruta."
+    },
+    {
+        "question": "Tiene agujas pero no pincha, tiene números pero no cuenta. ¿Qué es?",
+        "answer": "reloj",
+        "hint": "Lo miras cuando quieres saber la hora."
+    },
+    {
+        "question": "Vuelo sin alas, lloro sin ojos. ¿Qué soy?",
+        "answer": "nube",
+        "hint": "Aparezco en el cielo."
+    },
+    {
+        "question": "Cuanto más seco, más me mojo. ¿Qué soy?",
+        "answer": "toalla",
+        "hint": "Te ayuda después de bañarte."
+    },
+    {
+        "question": "No tengo boca pero hablo, no tengo piernas pero corro. ¿Qué soy?",
+        "answer": "rio",
+        "hint": "Fluye hacia el mar."
+    }
+]
+
+# --- CONSTANTES DEL JUEGO ---
+TIME_PER_RIDDLE = 30  # segundos
+MAX_ATTEMPTS = 3
+POINTS_CORRECT = 10
+POINTS_HINT = -3
+POINTS_SKIP = 0
+
+class RiddleGame:
+    def __init__(self, master):
+        self.master = master
+        master.title("Juego de Acertijos")
+        master.resizable(False, False)
+
+        # Estado del juego
+        self.riddles = RIDDLES.copy()
+        random.shuffle(self.riddles)
+        self.index = 0
+        self.score = 0
+        self.attempts_left = MAX_ATTEMPTS
+        self.timer = TIME_PER_RIDDLE
+        self.timer_job = None
+        self.hint_used = False
+        self.answered = False
+
+        # UI
+        self.frame = tk.Frame(master, padx=12, pady=12)
+        self.frame.pack()
+
+        self.lbl_score = tk.Label(self.frame, text=f"Puntaje: {self.score}", font=("Helvetica", 12, "bold"))
+        self.lbl_score.grid(row=0, column=0, sticky="w")
+
+        self.lbl_attempts = tk.Label(self.frame, text=f"Intentos: {self.attempts_left}", font=("Helvetica", 10))
+        self.lbl_attempts.grid(row=0, column=1, sticky="e")
+
+        self.lbl_timer = tk.Label(self.frame, text=f"Tiempo: {self.timer}s", font=("Helvetica", 10))
+        self.lbl_timer.grid(row=0, column=2, sticky="e", padx=(10,0))
+
+        self.lbl_question = tk.Label(self.frame, text="", wraplength=420, justify="left", font=("Helvetica", 14))
+        self.lbl_question.grid(row=1, column=0, columnspan=3, pady=(10, 8))
+
+        self.entry_answer = tk.Entry(self.frame, font=("Helvetica", 12))
+        self.entry_answer.grid(row=2, column=0, columnspan=2, sticky="we", pady=(0,8))
+        self.entry_answer.bind("<Return>", lambda e: self.check_answer())
+
+        self.btn_check = tk.Button(self.frame, text="Comprobar", command=self.check_answer, width=12)
+        self.btn_check.grid(row=2, column=2, padx=(8,0))
+
+        self.lbl_feedback = tk.Label(self.frame, text="", font=("Helvetica", 10), fg="blue")
+        self.lbl_feedback.grid(row=3, column=0, columnspan=3, pady=(6,4))
+
+        self.btn_hint = tk.Button(self.frame, text="Pista (-3 pts)", command=self.use_hint, width=12)
+        self.btn_hint.grid(row=4, column=0, pady=(6,0))
+
+        self.btn_show = tk.Button(self.frame, text="Mostrar respuesta", command=self.show_answer, width=16)
+        self.btn_show.grid(row=4, column=1, pady=(6,0))
+
+        self.btn_next = tk.Button(self.frame, text="Siguiente →", command=self.next_riddle, width=12)
+        self.btn_next.grid(row=4, column=2, pady=(6,0))
+
+        self.btn_restart = tk.Button(self.frame, text="Reiniciar juego", command=self.restart, width=40)
+        self.btn_restart.grid(row=5, column=0, columnspan=3, pady=(12,0))
+
+        # Cargar el primer acertijo
+        self.load_riddle()
+
+    def load_riddle(self):
+        if self.index >= len(self.riddles):
+            self.end_game()
+            return
+
+        self.current = self.riddles[self.index]
+        self.lbl_question.config(text=f"Acertijo {self.index + 1} de {len(self.riddles)}:\n\n{self.current['question']}")
+        self.entry_answer.delete(0, tk.END)
+        self.lbl_feedback.config(text="")
+        self.hint_used = False
+        self.answered = False
+        self.attempts_left = MAX_ATTEMPTS
+        self.lbl_attempts.config(text=f"Intentos: {self.attempts_left}")
+        self.timer = TIME_PER_RIDDLE
+        self.lbl_timer.config(text=f"Tiempo: {self.timer}s")
+
+        # habilitar botones
+        self.btn_check.config(state="normal")
+        self.btn_hint.config(state="normal")
+        self.btn_show.config(state="normal")
+
+        # iniciar timer
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+        self.countdown()
+
+    def countdown(self):
+        self.lbl_timer.config(text=f"Tiempo: {self.timer}s")
+        if self.timer <= 0:
+            self.lbl_feedback.config(text="Se acabó el tiempo. Se pasa al siguiente acertijo.")
+            self.mark_incorrect_by_timeout()
+            return
+        self.timer -= 1
+        self.timer_job = self.master.after(1000, self.countdown)
+
+    def check_answer(self):
+        if self.answered:
+            return
+
+        user = self.entry_answer.get().strip().lower()
+        correct = self.current['answer'].strip().lower()
+
+        if user == "":
+            self.lbl_feedback.config(text="Escribe una respuesta antes de comprobar.")
+            return
+
+        if user == correct:
+            self.score += POINTS_CORRECT
+            self.lbl_score.config(text=f"Puntaje: {self.score}")
+            self.lbl_feedback.config(text="¡Respuesta correcta! +10 pts.")
+            self.answered = True
+            self.btn_check.config(state="disabled")
+            self.btn_hint.config(state="disabled")
+            self.btn_show.config(state="disabled")
+            if self.timer_job:
+                self.master.after_cancel(self.timer_job)
+        else:
+            self.attempts_left -= 1
+            if self.attempts_left <= 0:
+                self.lbl_feedback.config(text=f"Incorrecto. No te quedan intentos. La respuesta era: {self.current['answer']}.")
+                self.answered = True
+                self.btn_check.config(state="disabled")
+                self.btn_hint.config(state="disabled")
+                self.btn_show.config(state="disabled")
+                if self.timer_job:
+                    self.master.after_cancel(self.timer_job)
+            else:
+                self.lbl_feedback.config(text=f"Incorrecto. Intentos restantes: {self.attempts_left}.")
+            self.lbl_attempts.config(text=f"Intentos: {self.attempts_left}")
+
+    def use_hint(self):
+        if self.hint_used:
+            return
+        self.hint_used = True
+        self.score += POINTS_HINT
+        self.lbl_score.config(text=f"Puntaje: {self.score}")
+        self.lbl_feedback.config(text=f"Pista: {self.current.get('hint', 'No hay pista disponible.')}")
+        self.btn_hint.config(state="disabled")
+
+    def show_answer(self):
+        if self.answered:
+            return
+        answer = self.current['answer']
+        self.lbl_feedback.config(text=f"La respuesta es: {answer}")
+        self.answered = True
+        self.btn_check.config(state="disabled")
+        self.btn_hint.config(state="disabled")
+        self.btn_show.config(state="disabled")
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+
+    def mark_incorrect_by_timeout(self):
+        # cuando se acaba el tiempo se muestra la respuesta y se permite avanzar
+        self.lbl_feedback.config(text=f"Tiempo agotado. La respuesta era: {self.current['answer']}.")
+        self.answered = True
+        self.btn_check.config(state="disabled")
+        self.btn_hint.config(state="disabled")
+        self.btn_show.config(state="disabled")
+
+    def next_riddle(self):
+        # pasar al siguiente acertijo (si el usuario nunca respondió se considera salto)
+        if not self.answered:
+            # salto: no se suman puntos, solo se avanza
+            self.lbl_feedback.config(text=f"Has saltado el acertijo. La respuesta era: {self.current['answer']}.")
+        # cancelar timer si estaba corriendo
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+            self.timer_job = None
+        self.index += 1
+        self.load_riddle()
+
+    def end_game(self):
+        # mostrar resultado final
+        msg = f"Juego terminado.\nPuntaje final: {self.score} puntos.\n\n¿Quieres jugar de nuevo?"
+        play_again = messagebox.askyesno("Fin del juego", msg)
+        if play_again:
+            self.restart()
+        else:
+            self.master.destroy()
+
+    def restart(self):
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+            self.timer_job = None
+        random.shuffle(self.riddles)
+        self.index = 0
+        self.score = 0
+        self.lbl_score.config(text=f"Puntaje: {self.score}")
+        self.load_riddle()
+
+
+def main():
+    root = tk.Tk()
+    app = RiddleGame(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+import tkinter as tk
+from tkinter import messagebox
+import random
+
+class JuegoTroll:
+    def __init__(self, root):
+        self.root = root
+        root.title("Juego Troll 😈")
+        root.geometry("500x300")
+        root.resizable(False, False)
+
+        self.pregunta_label = tk.Label(root, text="¿Quieres jugar un juego sencillo?", font=("Arial", 14))
+        self.pregunta_label.pack(pady=20)
+
+        self.btn_si = tk.Button(root, text="Sí", font=("Arial", 12), command=self.respuesta_si)
+        self.btn_si.place(x=150, y=150)
+
+        self.btn_no = tk.Button(root, text="No", font=("Arial", 12), command=self.respuesta_no)
+        self.btn_no.place(x=250, y=150)
+
+        # Hace que el botón NO huya
+        self.btn_no.bind("<Enter>", self.huir)
+
+    def huir(self, event):
+        """El botón se mueve aleatoriamente cuando el mouse se acerca."""
+        nuevo_x = random.randint(0, 450)
+        nuevo_y = random.randint(50, 250)
+        self.btn_no.place(x=nuevo_x, y=nuevo_y)
+
+    def respuesta_si(self):
+        messagebox.showinfo("Perfecto", "¡Genial! Ahora viene la primera pregunta troll 😈")
+        self.pregunta_troll()
+
+    def respuesta_no(self):
+        # Nunca debería pasar porque el botón huye
+        messagebox.showwarning("¿En serio?", "¿Cómo le diste click si el botón se mueve?")
+        self.pregunta_troll()
+
+    def pregunta_troll(self):
+        self.pregunta_label.config(text="Pregunta 1:\n¿Cuánto es 2 + 2 * 0?")
+
+        # Eliminar botones anteriores
+        self.btn_si.destroy()
+        self.btn_no.destroy()
+
+        # Opciones troll
+        opciones = [
+            ("4", self.incorrecto),
+            ("0", self.incorrecto),
+            ("22", self.incorrecto),
+            ("La respuesta es invisible", self.correcto_troll)
+        ]
+
+        y = 140
+        for texto, comando in opciones:
+            b = tk.Button(self.root, text=texto, font=("Arial", 12), command=comando, width=22)
+            b.place(x=120, y=y)
+            y += 40
+
+    def incorrecto(self):
+        messagebox.showerror("Incorrecto", "JAJAJA. Esa NO era.\nInténtalo hasta que pierdas la paciencia.")
+
+    def correcto_troll(self):
+        messagebox.showinfo("Correcto… creo", "Correcto… o tal vez no… quién sabe.\nSiguiente nivel troll.")
+        self.final_troll()
+
+    def final_troll(self):
+        self.pregunta_label.config(text="Última pregunta:\n¿Eres un robot?")
+
+        # Limpia todos los widgets previos
+        for widget in self.root.place_slaves():
+            widget.destroy()
+
+        # Los botones hacen lo contrario de lo que dicen
+        btn1 = tk.Button(self.root, text="Sí", font=("Arial", 12), command=self.final_no)
+        btn2 = tk.Button(self.root, text="No", font=("Arial", 12), command=self.final_si)
+
+        btn1.place(x=150, y=160)
+        btn2.place(x=250, y=160)
+
+    def final_si(self):
+        messagebox.showinfo("Resultado", "Entonces eres un robot. Lo sabía 🤖.")
+        self.root.destroy()
+
+    def final_no(self):
+        messagebox.showinfo("Resultado", "Entonces eres humano.\nPero igual perdiste el juego troll 😈.")
+        self.root.destroy()
+
+
+root = tk.Tk()
+juego = JuegoTroll(root)
+root.mainloop()
+
+# acertijos.py
+import tkinter as tk
+from tkinter import messagebox
+import random
+
+# --- CONFIGURACIÓN DE ACERTIJOS ---
+RIDDLES = [
+    {
+        "question": "Blanca por dentro, verde por fuera. Si quieres que te lo diga, espera.",
+        "answer": "pera",
+        "hint": "Es una fruta."
+    },
+    {
+        "question": "Tiene agujas pero no pincha, tiene números pero no cuenta. ¿Qué es?",
+        "answer": "reloj",
+        "hint": "Lo miras cuando quieres saber la hora."
+    },
+    {
+        "question": "Vuelo sin alas, lloro sin ojos. ¿Qué soy?",
+        "answer": "nube",
+        "hint": "Aparezco en el cielo."
+    },
+    {
+        "question": "Cuanto más seco, más me mojo. ¿Qué soy?",
+        "answer": "toalla",
+        "hint": "Te ayuda después de bañarte."
+    },
+    {
+        "question": "No tengo boca pero hablo, no tengo piernas pero corro. ¿Qué soy?",
+        "answer": "rio",
+        "hint": "Fluye hacia el mar."
+    }
+]
+
+# --- CONSTANTES DEL JUEGO ---
+TIME_PER_RIDDLE = 30  # segundos
+MAX_ATTEMPTS = 3
+POINTS_CORRECT = 10
+POINTS_HINT = -3
+POINTS_SKIP = 0
+
+class RiddleGame:
+    def __init__(self, master):
+        self.master = master
+        master.title("Juego de Acertijos")
+        master.resizable(False, False)
+
+        # Estado del juego
+        self.riddles = RIDDLES.copy()
+        random.shuffle(self.riddles)
+        self.index = 0
+        self.score = 0
+        self.attempts_left = MAX_ATTEMPTS
+        self.timer = TIME_PER_RIDDLE
+        self.timer_job = None
+        self.hint_used = False
+        self.answered = False
+
+        # UI
+        self.frame = tk.Frame(master, padx=12, pady=12)
+        self.frame.pack()
+
+        self.lbl_score = tk.Label(self.frame, text=f"Puntaje: {self.score}", font=("Helvetica", 12, "bold"))
+        self.lbl_score.grid(row=0, column=0, sticky="w")
+
+        self.lbl_attempts = tk.Label(self.frame, text=f"Intentos: {self.attempts_left}", font=("Helvetica", 10))
+        self.lbl_attempts.grid(row=0, column=1, sticky="e")
+
+        self.lbl_timer = tk.Label(self.frame, text=f"Tiempo: {self.timer}s", font=("Helvetica", 10))
+        self.lbl_timer.grid(row=0, column=2, sticky="e", padx=(10,0))
+
+        self.lbl_question = tk.Label(self.frame, text="", wraplength=420, justify="left", font=("Helvetica", 14))
+        self.lbl_question.grid(row=1, column=0, columnspan=3, pady=(10, 8))
+
+        self.entry_answer = tk.Entry(self.frame, font=("Helvetica", 12))
+        self.entry_answer.grid(row=2, column=0, columnspan=2, sticky="we", pady=(0,8))
+        self.entry_answer.bind("<Return>", lambda e: self.check_answer())
+
+        self.btn_check = tk.Button(self.frame, text="Comprobar", command=self.check_answer, width=12)
+        self.btn_check.grid(row=2, column=2, padx=(8,0))
+
+        self.lbl_feedback = tk.Label(self.frame, text="", font=("Helvetica", 10), fg="blue")
+        self.lbl_feedback.grid(row=3, column=0, columnspan=3, pady=(6,4))
+
+        self.btn_hint = tk.Button(self.frame, text="Pista (-3 pts)", command=self.use_hint, width=12)
+        self.btn_hint.grid(row=4, column=0, pady=(6,0))
+
+        self.btn_show = tk.Button(self.frame, text="Mostrar respuesta", command=self.show_answer, width=16)
+        self.btn_show.grid(row=4, column=1, pady=(6,0))
+
+        self.btn_next = tk.Button(self.frame, text="Siguiente →", command=self.next_riddle, width=12)
+        self.btn_next.grid(row=4, column=2, pady=(6,0))
+
+        self.btn_restart = tk.Button(self.frame, text="Reiniciar juego", command=self.restart, width=40)
+        self.btn_restart.grid(row=5, column=0, columnspan=3, pady=(12,0))
+
+        # Cargar el primer acertijo
+        self.load_riddle()
+
+    def load_riddle(self):
+        if self.index >= len(self.riddles):
+            self.end_game()
+            return
+
+        self.current = self.riddles[self.index]
+        self.lbl_question.config(text=f"Acertijo {self.index + 1} de {len(self.riddles)}:\n\n{self.current['question']}")
+        self.entry_answer.delete(0, tk.END)
+        self.lbl_feedback.config(text="")
+        self.hint_used = False
+        self.answered = False
+        self.attempts_left = MAX_ATTEMPTS
+        self.lbl_attempts.config(text=f"Intentos: {self.attempts_left}")
+        self.timer = TIME_PER_RIDDLE
+        self.lbl_timer.config(text=f"Tiempo: {self.timer}s")
+
+        # habilitar botones
+        self.btn_check.config(state="normal")
+        self.btn_hint.config(state="normal")
+        self.btn_show.config(state="normal")
+
+        # iniciar timer
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+        self.countdown()
+
+    def countdown(self):
+        self.lbl_timer.config(text=f"Tiempo: {self.timer}s")
+        if self.timer <= 0:
+            self.lbl_feedback.config(text="Se acabó el tiempo. Se pasa al siguiente acertijo.")
+            self.mark_incorrect_by_timeout()
+            return
+        self.timer -= 1
+        self.timer_job = self.master.after(1000, self.countdown)
+
+    def check_answer(self):
+        if self.answered:
+            return
+
+        user = self.entry_answer.get().strip().lower()
+        correct = self.current['answer'].strip().lower()
+
+        if user == "":
+            self.lbl_feedback.config(text="Escribe una respuesta antes de comprobar.")
+            return
+
+        if user == correct:
+            self.score += POINTS_CORRECT
+            self.lbl_score.config(text=f"Puntaje: {self.score}")
+            self.lbl_feedback.config(text="¡Respuesta correcta! +10 pts.")
+            self.answered = True
+            self.btn_check.config(state="disabled")
+            self.btn_hint.config(state="disabled")
+            self.btn_show.config(state="disabled")
+            if self.timer_job:
+                self.master.after_cancel(self.timer_job)
+        else:
+            self.attempts_left -= 1
+            if self.attempts_left <= 0:
+                self.lbl_feedback.config(text=f"Incorrecto. No te quedan intentos. La respuesta era: {self.current['answer']}.")
+                self.answered = True
+                self.btn_check.config(state="disabled")
+                self.btn_hint.config(state="disabled")
+                self.btn_show.config(state="disabled")
+                if self.timer_job:
+                    self.master.after_cancel(self.timer_job)
+            else:
+                self.lbl_feedback.config(text=f"Incorrecto. Intentos restantes: {self.attempts_left}.")
+            self.lbl_attempts.config(text=f"Intentos: {self.attempts_left}")
+
+    def use_hint(self):
+        if self.hint_used:
+            return
+        self.hint_used = True
+        self.score += POINTS_HINT
+        self.lbl_score.config(text=f"Puntaje: {self.score}")
+        self.lbl_feedback.config(text=f"Pista: {self.current.get('hint', 'No hay pista disponible.')}")
+        self.btn_hint.config(state="disabled")
+
+    def show_answer(self):
+        if self.answered:
+            return
+        answer = self.current['answer']
+        self.lbl_feedback.config(text=f"La respuesta es: {answer}")
+        self.answered = True
+        self.btn_check.config(state="disabled")
+        self.btn_hint.config(state="disabled")
+        self.btn_show.config(state="disabled")
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+
+    def mark_incorrect_by_timeout(self):
+        # cuando se acaba el tiempo se muestra la respuesta y se permite avanzar
+        self.lbl_feedback.config(text=f"Tiempo agotado. La respuesta era: {self.current['answer']}.")
+        self.answered = True
+        self.btn_check.config(state="disabled")
+        self.btn_hint.config(state="disabled")
+        self.btn_show.config(state="disabled")
+
+    def next_riddle(self):
+        # pasar al siguiente acertijo (si el usuario nunca respondió se considera salto)
+        if not self.answered:
+            # salto: no se suman puntos, solo se avanza
+            self.lbl_feedback.config(text=f"Has saltado el acertijo. La respuesta era: {self.current['answer']}.")
+        # cancelar timer si estaba corriendo
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+            self.timer_job = None
+        self.index += 1
+        self.load_riddle()
+
+    def end_game(self):
+        # mostrar resultado final
+        msg = f"Juego terminado.\nPuntaje final: {self.score} puntos.\n\n¿Quieres jugar de nuevo?"
+        play_again = messagebox.askyesno("Fin del juego", msg)
+        if play_again:
+            self.restart()
+        else:
+            self.master.destroy()
+
+    def restart(self):
+        if self.timer_job:
+            self.master.after_cancel(self.timer_job)
+            self.timer_job = None
+        random.shuffle(self.riddles)
+        self.index = 0
+        self.score = 0
+        self.lbl_score.config(text=f"Puntaje: {self.score}")
+        self.load_riddle()
+
+
+def main():
+    root = tk.Tk()
+    app = RiddleGame(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
+
+
+
+
